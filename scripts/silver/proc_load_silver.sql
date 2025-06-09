@@ -1,20 +1,21 @@
 /*
 ===============================================================================
-Stored Procedure: Load Silver Layer (Bronze -> Silver)
+Load Silver Tables ( Bronze-> Silver)
 ===============================================================================
-Script Purpose:
-    This stored procedure performs the ETL (Extract, Transform, Load) process to 
-    populate the 'silver' schema tables from the 'bronze' schema.
-    Actions Performed:
-        - Truncates Silver tables.
-        - Inserts transformed and cleansed data from Bronze into Silver tables.
+What this does:
+    This takes raw data from bronze and cleans it up for the silver layer.
+    
+    Steps it follows:
+    - Clears out old data from silver tables
+    - Takes bronze data, cleans it up, and puts it in silver tables
+    
+No inputs needed:
+    Just run it - no settings or values required.
 
-Parameters:
-    None. 
-      This stored procedure does not accept any parameters or return any values.
-
-Usage Example:
+How to use:
     EXEC Silver.load_silver;
+    
+    Watch as messy data becomes clean data!
 ===============================================================================
 */
 
@@ -36,7 +37,7 @@ BEGIN
 		PRINT '>> Truncating Table: silver.crm_cust_info';
 		TRUNCATE TABLE silver.crm_cust_info;
 		PRINT '>> Inserting Data Into: silver.crm_cust_info';
-		INSERT INTO silver.crm_cust_info (
+		INSERT INTO silver.crm_cust_info ( -- The columns we inserting data into
 			cst_id, 
 			cst_key, 
 			cst_firstname, 
@@ -48,12 +49,12 @@ BEGIN
 		SELECT
 			cst_id,
 			cst_key,
-			TRIM(cst_firstname) AS cst_firstname,
+			TRIM(cst_firstname) AS cst_firstname,-- Removes any unwanted spaces
 			TRIM(cst_lastname) AS cst_lastname,
 			CASE 
-				WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+				WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single' -- Combines upper and trim to ensure it matches the 'S' and if it does it changes it to redable data
 				WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
-				ELSE 'n/a'
+				ELSE 'n/a'		-- If the data is not 'S' or 'M' then it just changes it to n/a
 			END AS cst_marital_status, -- Normalize marital status values to readable format
 			CASE 
 				WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
@@ -61,10 +62,10 @@ BEGIN
 				ELSE 'n/a'
 			END AS cst_gndr, -- Normalize gender values to readable format
 			cst_create_date
-		FROM (
+		FROM ( 
 			SELECT
 				*,
-				ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last
+				ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS flag_last -- Groups duplicates by cst_id in the table then gives each duplicate in a group a unique descending order from create date saves it to a colum caled flag_last
 			FROM bronze.crm_cust_info
 			WHERE cst_id IS NOT NULL
 		) t
@@ -90,10 +91,10 @@ BEGIN
 		)
 		SELECT
 			prd_id,
-			REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id, -- Extract category ID
-			SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,        -- Extract product key
+			REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id, -- Extract category ID, substring is they keyword, first index prd_key is what is being extracted, the 1 is where we are starting from, 5 is where we ending. The replace replaces - with a _
+			SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,        -- Extract product key, starts at 7 and the rest of prd key
 			prd_nm,
-			ISNULL(prd_cost, 0) AS prd_cost,
+			ISNULL(prd_cost, 0) AS prd_cost,                     -- If prd_cost is null then replace it with a 0
 			CASE 
 				WHEN UPPER(TRIM(prd_line)) = 'M' THEN 'Mountain'
 				WHEN UPPER(TRIM(prd_line)) = 'R' THEN 'Road'
@@ -103,7 +104,7 @@ BEGIN
 			END AS prd_line, -- Map product line codes to descriptive values
 			CAST(prd_start_dt AS DATE) AS prd_start_dt,
 			CAST(
-				LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt) - 1 
+				LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt) - 1 -- Groups duplicate prd_key together and within each group it orders them by start date, looks at the next row start date of columns that are grouped together and subtracts one day then adds it as the end date
 				AS DATE
 			) AS prd_end_dt -- Calculate end date as one day before the next start date
 		FROM bronze.crm_prd_info;
@@ -132,8 +133,8 @@ BEGIN
 			sls_prd_key,
 			sls_cust_id,
 			CASE 
-				WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL
-				ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE)
+				WHEN sls_order_dt = 0 OR LEN(sls_order_dt) != 8 THEN NULL -- If the date is too long or too short then Null it
+				ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE) -- Else ransform the date to varchar then back to date since number-> date is  not a possible conversion
 			END AS sls_order_dt,
 			CASE 
 				WHEN sls_ship_dt = 0 OR LEN(sls_ship_dt) != 8 THEN NULL
